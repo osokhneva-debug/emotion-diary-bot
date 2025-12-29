@@ -9,7 +9,11 @@ class Database:
         self.pool: Optional[asyncpg.Pool] = None
 
     async def connect(self):
-        self.pool = await asyncpg.create_pool(DATABASE_URL)
+        self.pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=5  # Ограничиваем количество подключений для бесплатного Supabase
+        )
         await self._create_tables()
 
     async def disconnect(self):

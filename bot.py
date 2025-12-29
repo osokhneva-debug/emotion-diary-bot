@@ -67,11 +67,11 @@ def get_emotion_start_keyboard():
 
 
 def get_categories_keyboard():
-    """Categories in 3 columns"""
+    """Categories in 2 columns"""
     buttons = []
-    for i in range(0, len(CATEGORIES), 3):
+    for i in range(0, len(CATEGORIES), 2):
         row = []
-        for j in range(3):
+        for j in range(2):
             if i + j < len(CATEGORIES):
                 cat = CATEGORIES[i + j]
                 row.append(InlineKeyboardButton(text=cat, callback_data=f"cat_{i + j}"))

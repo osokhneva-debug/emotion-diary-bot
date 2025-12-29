@@ -260,17 +260,17 @@ async def start_emotion_check(user_id: int, state: FSMContext, message: Message 
 async def handle_free_emotion_input(message: Message, state: FSMContext):
     """User typed their emotion freely"""
     emotion_text = message.text.strip()
-    await state.update_data(emotion=emotion_text, category=None)
+    await state.update_data(emotion=emotion_text, category=None, intensity=None)
 
-    # Move to intensity
+    # Skip intensity, go directly to body sensations
     await message.answer(
         f"*{emotion_text}* — записала.\n\n"
-        "Насколько сильно это ощущается по шкале от 0 до 10?\n"
-        "(0 — едва заметно, 10 — очень сильно)",
-        reply_markup=get_intensity_keyboard(),
+        "Есть ли телесные ощущения, которые ты замечаешь?\n"
+        "(напряжение, тепло, сжатие...)",
+        reply_markup=get_body_sensations_keyboard(),
         parse_mode="Markdown"
     )
-    await state.set_state(EmotionStates.waiting_for_intensity)
+    await state.set_state(EmotionStates.waiting_for_body_sensation)
 
 
 @dp.callback_query(F.data == "show_emotions", EmotionStates.waiting_for_emotion_input)
@@ -337,17 +337,17 @@ async def select_emotion(callback: CallbackQuery, state: FSMContext):
     em_index = int(callback.data.split("_")[1])
     emotion = EMOTIONS[category]["emotions"][em_index]
 
-    await state.update_data(emotion=emotion)
+    await state.update_data(emotion=emotion, intensity=None)
 
-    # Move to intensity
+    # Skip intensity, go directly to body sensations
     await callback.message.edit_text(
         f"*{emotion}* — понятно.\n\n"
-        "Насколько сильно это ощущается по шкале от 0 до 10?\n"
-        "(0 — едва заметно, 10 — очень сильно)",
-        reply_markup=get_intensity_keyboard(),
+        "Есть ли телесные ощущения, которые ты замечаешь?\n"
+        "(напряжение, тепло, сжатие...)",
+        reply_markup=get_body_sensations_keyboard(),
         parse_mode="Markdown"
     )
-    await state.set_state(EmotionStates.waiting_for_intensity)
+    await state.set_state(EmotionStates.waiting_for_body_sensation)
     await callback.answer()
 
 
@@ -825,20 +825,26 @@ async def check_and_send_notifications():
     now = datetime.now(tz.utc).replace(tzinfo=None)
     pending_checks = await db.get_pending_checks(now)
 
+    # Group by user_id to avoid duplicate messages
+    users_notified = set()
+
     for check in pending_checks:
         user_id = check['user_id']
+        await db.mark_check_sent(check['id'])  # Mark as sent regardless
+
+        if user_id in users_notified:
+            continue  # Already sent to this user
+
         try:
-            # Send empathetic ping with options
             await bot.send_message(
                 user_id,
                 "Привет! Как ты сейчас?",
                 reply_markup=get_ping_keyboard()
             )
-            await db.mark_check_sent(check['id'])
+            users_notified.add(user_id)
             logger.info(f"Sent check to user {user_id}")
         except Exception as e:
             logger.error(f"Failed to send check to {user_id}: {e}")
-            await db.mark_check_sent(check['id'])
 
 
 async def regenerate_daily_schedules():

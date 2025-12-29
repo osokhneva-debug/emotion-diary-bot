@@ -825,24 +825,31 @@ async def check_and_send_notifications():
     now = datetime.now(tz.utc).replace(tzinfo=None)
     pending_checks = await db.get_pending_checks(now)
 
-    # Group by user_id to avoid duplicate messages
-    users_notified = set()
+    if not pending_checks:
+        return
 
+    # Group checks by user_id - collect all check IDs per user
+    user_checks = {}
     for check in pending_checks:
         user_id = check['user_id']
-        await db.mark_check_sent(check['id'])  # Mark as sent regardless
+        if user_id not in user_checks:
+            user_checks[user_id] = []
+        user_checks[user_id].append(check['id'])
 
-        if user_id in users_notified:
-            continue  # Already sent to this user
+    # For each unique user: mark ALL their checks as sent, then send ONE message
+    for user_id, check_ids in user_checks.items():
+        # First mark all checks as sent to prevent duplicates on next run
+        for check_id in check_ids:
+            await db.mark_check_sent(check_id)
 
+        # Then send exactly one message
         try:
             await bot.send_message(
                 user_id,
                 "Привет! Как ты сейчас?",
                 reply_markup=get_ping_keyboard()
             )
-            users_notified.add(user_id)
-            logger.info(f"Sent check to user {user_id}")
+            logger.info(f"Sent check to user {user_id} (marked {len(check_ids)} checks as sent)")
         except Exception as e:
             logger.error(f"Failed to send check to {user_id}: {e}")
 

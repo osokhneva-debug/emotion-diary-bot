@@ -129,14 +129,6 @@ def get_skip_keyboard(callback_data: str):
     ])
 
 
-def get_reason_keyboard():
-    """Keyboard for reason step with two options"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Записать", callback_data="save_now"),
-         InlineKeyboardButton(text="Пропустить", callback_data="skip_reason")]
-    ])
-
-
 def get_note_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Добавить заметку", callback_data="add_note")],
@@ -425,14 +417,14 @@ async def handle_body_sensation_text(message: Message, state: FSMContext):
 
 async def ask_for_reason(message: Message, state: FSMContext, edit: bool = True):
     text = (
-        "Что, как тебе кажется, поспособствовало этому?\n"
+        "Напиши что поспособствовало этому\n"
         "(событие, мысль, человек, место...)"
     )
 
     if edit:
-        await message.edit_text(text, reply_markup=get_reason_keyboard())
+        await message.edit_text(text, reply_markup=get_skip_keyboard("skip_reason"))
     else:
-        await message.answer(text, reply_markup=get_reason_keyboard())
+        await message.answer(text, reply_markup=get_skip_keyboard("skip_reason"))
 
     await state.set_state(EmotionStates.waiting_for_reason)
 
@@ -447,14 +439,6 @@ async def handle_reason_input(message: Message, state: FSMContext):
 async def skip_reason(callback: CallbackQuery, state: FSMContext):
     await state.update_data(reason=None)
     await finish_entry_flow(callback.message, state, edit=True)
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "save_now", EmotionStates.waiting_for_reason)
-async def save_now(callback: CallbackQuery, state: FSMContext):
-    """Save entry immediately without reason or note"""
-    await state.update_data(reason=None, note=None)
-    await save_entry_and_finish(callback.message, state, edit=True)
     await callback.answer()
 
 

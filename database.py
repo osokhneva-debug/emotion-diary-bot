@@ -294,10 +294,14 @@ class Database:
     async def clear_all_pending_checks(self):
         """Clear all pending checks on startup to prevent duplicates"""
         async with self.pool.acquire() as conn:
-            deleted = await conn.fetchval(
-                "DELETE FROM scheduled_checks WHERE sent = FALSE RETURNING COUNT(*)"
+            # First count, then delete
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM scheduled_checks WHERE sent = FALSE"
             )
-            return deleted or 0
+            await conn.execute(
+                "DELETE FROM scheduled_checks WHERE sent = FALSE"
+            )
+            return count or 0
 
     async def save_scheduled_checks(self, user_id: int, check_times: List[datetime]):
         async with self.pool.acquire() as conn:

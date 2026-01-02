@@ -924,6 +924,11 @@ async def main():
     await db.connect()
     logger.info("Database connected")
 
+    # Clear any pending checks from previous runs to prevent duplicates
+    cleared = await db.clear_all_pending_checks()
+    if cleared:
+        logger.info(f"Cleared {cleared} pending checks from previous run")
+
     scheduler.add_job(check_and_send_notifications, "cron", minute="*")
     scheduler.add_job(regenerate_daily_schedules, "cron", hour=0, minute=0)
     scheduler.add_job(send_weekly_summary, "cron", day_of_week="sun", hour=20, minute=0)

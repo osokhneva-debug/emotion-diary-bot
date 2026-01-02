@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone as tz
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -928,9 +928,23 @@ async def on_startup(app):
 
     await regenerate_daily_schedules()
 
+    # Set bot commands menu
+    commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="check", description="Записать эмоцию"),
+        BotCommand(command="diary", description="Мой дневник"),
+        BotCommand(command="stats", description="Статистика"),
+        BotCommand(command="settings", description="Настройки"),
+    ]
+    await bot.set_my_commands(commands)
+    logger.info("Bot commands menu set")
+
     # Set webhook
-    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
-    logger.info(f"Webhook set to {WEBHOOK_URL}")
+    if WEBHOOK_URL:
+        await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+        logger.info(f"Webhook set to {WEBHOOK_URL}")
+    else:
+        logger.warning("WEBHOOK_URL not set - bot will not receive updates!")
 
 
 async def on_shutdown(app):

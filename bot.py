@@ -12,7 +12,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiohttp import web
 
-from config import BOT_TOKEN
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
+from config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH
 from database import db
 from emotions import EMOTIONS, CATEGORIES, BODY_SENSATIONS
 
@@ -823,33 +825,22 @@ async def schedule_daily_checks(user_id: int, timezone: int, start_hour: int, en
 
 async def check_and_send_notifications():
     now = datetime.now(tz.utc).replace(tzinfo=None)
-    pending_checks = await db.get_pending_checks(now)
 
-    if not pending_checks:
+    # Atomically get and mark pending checks - prevents duplicates even between processes
+    user_ids = await db.get_and_mark_pending_checks(now)
+
+    if not user_ids:
         return
 
-    # Group checks by user_id - collect all check IDs per user
-    user_checks = {}
-    for check in pending_checks:
-        user_id = check['user_id']
-        if user_id not in user_checks:
-            user_checks[user_id] = []
-        user_checks[user_id].append(check['id'])
-
-    # For each unique user: mark ALL their checks as sent, then send ONE message
-    for user_id, check_ids in user_checks.items():
-        # First mark all checks as sent to prevent duplicates on next run
-        for check_id in check_ids:
-            await db.mark_check_sent(check_id)
-
-        # Then send exactly one message
+    # Send one message per user
+    for user_id in user_ids:
         try:
             await bot.send_message(
                 user_id,
                 "Привет! Как ты сейчас?",
                 reply_markup=get_ping_keyboard()
             )
-            logger.info(f"Sent check to user {user_id} (marked {len(check_ids)} checks as sent)")
+            logger.info(f"Sent check to user {user_id}")
         except Exception as e:
             logger.error(f"Failed to send check to {user_id}: {e}")
 
@@ -904,23 +895,13 @@ async def send_weekly_summary():
 # === HEALTH CHECK ===
 
 async def health_check(request):
-    return web.Response(text="OK")
+    return web.json_response({"status": "ok"})
 
 
-async def start_health_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    app.router.add_get("/health", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
-    await site.start()
-    logger.info("Health check server started on port 8080")
+# === STARTUP/SHUTDOWN ===
 
-
-# === MAIN ===
-
-async def main():
+async def on_startup(app):
+    """Called when the web server starts"""
     await db.connect()
     logger.info("Database connected")
 
@@ -929,22 +910,63 @@ async def main():
     if cleared:
         logger.info(f"Cleared {cleared} pending checks from previous run")
 
-    scheduler.add_job(check_and_send_notifications, "cron", minute="*")
-    scheduler.add_job(regenerate_daily_schedules, "cron", hour=0, minute=0)
-    scheduler.add_job(send_weekly_summary, "cron", day_of_week="sun", hour=20, minute=0)
+    # Setup scheduler
+    scheduler.add_job(
+        check_and_send_notifications, "cron", minute="*",
+        id="check_notifications", replace_existing=True, max_instances=1
+    )
+    scheduler.add_job(
+        regenerate_daily_schedules, "cron", hour=0, minute=0,
+        id="daily_schedules", replace_existing=True, max_instances=1
+    )
+    scheduler.add_job(
+        send_weekly_summary, "cron", day_of_week="sun", hour=20, minute=0,
+        id="weekly_summary", replace_existing=True, max_instances=1
+    )
     scheduler.start()
     logger.info("Scheduler started")
 
     await regenerate_daily_schedules()
-    await start_health_server()
 
-    logger.info("Bot started")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await db.disconnect()
-        scheduler.shutdown()
+    # Set webhook
+    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+    logger.info(f"Webhook set to {WEBHOOK_URL}")
+
+
+async def on_shutdown(app):
+    """Called when the web server stops"""
+    logger.info("Shutting down...")
+    await bot.delete_webhook()
+    await db.disconnect()
+    scheduler.shutdown()
+    await bot.session.close()
+
+
+# === MAIN ===
+
+def main():
+    # Create aiohttp app
+    app = web.Application()
+
+    # Health check endpoints
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
+
+    # Setup webhook handler
+    webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_handler.register(app, path=WEBHOOK_PATH)
+
+    # Setup aiogram integration
+    setup_application(app, dp, bot=bot)
+
+    # Register startup/shutdown handlers
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    # Run on port 8080 (Render expects this)
+    logger.info("Starting bot with webhook...")
+    web.run_app(app, host="0.0.0.0", port=8080)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

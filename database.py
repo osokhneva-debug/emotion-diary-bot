@@ -336,21 +336,33 @@ class Database:
                 user_id, today_start, today_end
             )
 
-    async def get_pending_checks(self, current_time: datetime) -> List[Dict]:
+    async def get_and_mark_pending_checks(self, current_time: datetime) -> List[int]:
+        """Atomically get pending checks and mark them as sent.
+        Returns list of unique user_ids that need to be notified.
+        Uses FOR UPDATE SKIP LOCKED to prevent duplicates between processes."""
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """SELECT id, user_id FROM scheduled_checks
-                   WHERE sent = FALSE AND scheduled_time <= $1""",
-                current_time
-            )
-            return [dict(row) for row in rows]
+            async with conn.transaction():
+                # Select and lock rows, skip if already locked by another process
+                rows = await conn.fetch(
+                    """SELECT id, user_id FROM scheduled_checks
+                       WHERE sent = FALSE AND scheduled_time <= $1
+                       FOR UPDATE SKIP LOCKED""",
+                    current_time
+                )
 
-    async def mark_check_sent(self, check_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE scheduled_checks SET sent = TRUE WHERE id = $1",
-                check_id
-            )
+                if not rows:
+                    return []
+
+                # Mark all as sent immediately
+                check_ids = [row['id'] for row in rows]
+                await conn.execute(
+                    "UPDATE scheduled_checks SET sent = TRUE WHERE id = ANY($1)",
+                    check_ids
+                )
+
+                # Return unique user_ids
+                user_ids = list(set(row['user_id'] for row in rows))
+                return user_ids
 
 
 db = Database()
